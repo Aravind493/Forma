@@ -1,0 +1,3 @@
+from django.urls import path
+from . import views
+urlpatterns=[path("",views.home,name="home"),path("page/<uuid:page_id>/",views.page_view,name="page"),path("share/<uuid:share_token>/",views.shared_page,name="shared_page"),path("api/pages/",views.create_page,name="create_page"),path("api/pages/<uuid:page_id>/",views.update_page,name="update_page"),path("api/pages/<uuid:page_id>/favorite/",views.toggle_favorite,name="toggle_favorite"),path("api/pages/<uuid:page_id>/share/",views.share_page,name="share_page"),path("api/search/",views.search,name="search"),path("import/notion/",views.import_notion,name="import_notion")]

@@ -1,0 +1,12 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+db.sqlite3
+staticfiles/
+media/
+
+# Generated migration bytecode only; keep migration source files in version control
+**/migrations/__pycache__/
+**/migrations/*.py[cod]
