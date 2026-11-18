@@ -5,11 +5,13 @@ from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import UserCreationForm
 from django.db.models import Q
+from django.db import transaction
 from django.http import JsonResponse, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.text import slugify
 from django.views.decorators.http import require_http_methods, require_POST
-from .models import Workspace, Membership, Page
+from .models import Workspace, Membership, Page, Profile
+from .forms import AccountDetailsForm, ProfileDetailsForm
 from .notion_import import import_notion_export, MAX_BYTES
 
 def _workspace(user):
@@ -62,6 +64,30 @@ def page_view(request,page_id):
     workspace=_workspace(request.user)
     page=get_object_or_404(Page.objects.select_related("workspace"),id=page_id,workspace=workspace,is_archived=False)
     return render(request,"pages/editor.html",{"workspace":workspace,"page_tree":_page_navigation(workspace),"page":page})
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def profile_view(request):
+    profile, _ = Profile.objects.get_or_create(user=request.user)
+    workspace = _workspace(request.user)
+    if request.method == "POST":
+        account_form = AccountDetailsForm(request.POST, instance=request.user)
+        profile_form = ProfileDetailsForm(request.POST, instance=profile)
+        if account_form.is_valid() and profile_form.is_valid():
+            with transaction.atomic():
+                account_form.save()
+                profile_form.save()
+            messages.success(request, "Your profile has been saved.")
+            return redirect("profile")
+    else:
+        account_form = AccountDetailsForm(instance=request.user)
+        profile_form = ProfileDetailsForm(instance=profile)
+    return render(request, "pages/profile.html", {
+        "workspace": workspace,
+        "account_form": account_form,
+        "profile_form": profile_form,
+        "page_count": workspace.pages.count() if workspace else 0,
+    })
 
 def shared_page(request,share_token):
     page=get_object_or_404(Page.objects.select_related("workspace"),share_token=share_token,is_archived=False)

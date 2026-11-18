@@ -12,6 +12,16 @@ class Membership(models.Model):
     workspace=models.ForeignKey(Workspace,on_delete=models.CASCADE); user=models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.CASCADE)
     role=models.CharField(max_length=12,choices=ROLE_CHOICES,default="editor"); joined_at=models.DateTimeField(auto_now_add=True)
     class Meta: constraints=[models.UniqueConstraint(fields=["workspace","user"],name="unique_workspace_member")]
+
+class Profile(models.Model):
+    user=models.OneToOneField(settings.AUTH_USER_MODEL,on_delete=models.CASCADE,related_name="profile")
+    bio=models.CharField(max_length=500,blank=True)
+    job_title=models.CharField(max_length=120,blank=True)
+    location=models.CharField(max_length=120,blank=True)
+    website=models.URLField(max_length=300,blank=True)
+    updated_at=models.DateTimeField(auto_now=True)
+    def __str__(self): return f"{self.user.username}'s profile"
+
 class Page(models.Model):
     id=models.UUIDField(primary_key=True,default=uuid.uuid4,editable=False)
     workspace=models.ForeignKey(Workspace,on_delete=models.CASCADE,related_name="pages")

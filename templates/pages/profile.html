@@ -1,0 +1,60 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Your profile · Forma{% endblock %}
+{% block body %}
+<link rel="stylesheet" href="{% static 'profile.css' %}">
+<div class="profile-page">
+  <header class="profile-topbar">
+    <a class="profile-brand" href="{% url 'home' %}"><span class="brand-mark">f.</span><span>Forma</span></a>
+    <div class="profile-top-actions"><span class="profile-breadcrumb">Account settings</span><a class="back-workspace" href="{% url 'home' %}">← Back to workspace</a></div>
+  </header>
+
+  <main class="profile-main">
+    <div class="profile-heading"><div><div class="profile-eyebrow">YOUR SPACE, YOUR WAY</div><h1>Profile</h1><p>Make your workspace feel a little more like you.</p></div><span class="private-pill"><span></span> Private account</span></div>
+
+    <section class="profile-hero">
+      <div class="hero-orbit orbit-one"></div><div class="hero-orbit orbit-two"></div>
+      <div class="hero-content">
+        <div class="profile-avatar">{{ request.user.first_name|default:request.user.username|slice:':1'|upper }}</div>
+        <div class="hero-copy"><span class="hero-kicker">YOUR FORMA PROFILE</span><h2>{{ request.user.get_full_name|default:request.user.username }}</h2><p>@{{ request.user.username }}{% if profile_form.instance.job_title %}<span>·</span>{{ profile_form.instance.job_title }}{% endif %}</p></div>
+      </div>
+      <div class="hero-stats"><div><strong>{{ page_count }}</strong><span>pages in your space</span></div><div class="stat-divider"></div><div><strong>{{ request.user.date_joined|date:"F Y" }}</strong><span>joined Forma</span></div></div>
+    </section>
+
+    {% if messages %}{% for message in messages %}<div class="profile-message {{ message.tags }}">{{ message }}</div>{% endfor %}{% endif %}
+    <div class="profile-columns">
+      <form class="profile-form" method="post" novalidate>
+        {% csrf_token %}
+        <section class="profile-card">
+          <div class="card-heading"><div class="card-icon">✳</div><div><h2>Account details</h2><p>How you appear in Forma.</p></div></div>
+          {{ account_form.non_field_errors }}
+          <div class="form-grid">
+            <div class="field"><label for="id_first_name">First name</label>{{ account_form.first_name }}{{ account_form.first_name.errors }}</div>
+            <div class="field"><label for="id_last_name">Last name</label>{{ account_form.last_name }}{{ account_form.last_name.errors }}</div>
+            <div class="field field-wide"><label for="id_email">Email address</label>{{ account_form.email }}{{ account_form.email.errors }}</div>
+            <div class="field field-wide"><label>Username</label><div class="readonly-field">@{{ request.user.username }}<span>Used to sign in</span></div></div>
+          </div>
+        </section>
+
+        <section class="profile-card optional-card">
+          <div class="card-heading"><div class="card-icon warm-icon">✦</div><div><h2>A little more about you <span>OPTIONAL</span></h2><p>Share the details you’re comfortable adding.</p></div></div>
+          {{ profile_form.non_field_errors }}
+          <div class="form-grid">
+            <div class="field"><label for="id_job_title">What do you do?</label>{{ profile_form.job_title }}{{ profile_form.job_title.errors }}</div>
+            <div class="field"><label for="id_location">Where are you based?</label>{{ profile_form.location }}{{ profile_form.location.errors }}</div>
+            <div class="field field-wide"><label for="id_website">Website</label>{{ profile_form.website }}{{ profile_form.website.errors }}</div>
+            <div class="field field-wide"><label for="id_bio">About you</label>{{ profile_form.bio }}<div class="field-hint">Up to 500 characters. This stays on your private account.</div>{{ profile_form.bio.errors }}</div>
+          </div>
+          <div class="profile-form-actions"><span>Your profile details are private.</span><button class="save-profile" type="submit">Save changes <span>→</span></button></div>
+        </section>
+      </form>
+
+      <aside class="profile-aside">
+        <section class="profile-card signout-card"><div class="signout-icon">↗</div><h2>Signing off?</h2><p>Your notes are saved in your workspace. You can come back any time.</p><form method="post" action="{% url 'logout' %}">{% csrf_token %}<button type="submit" class="signout-button">Log out <span>↗</span></button></form></section>
+        <div class="profile-note"><span>✳</span><p><strong>A small reminder</strong><br>Your personal details are only used to personalize your account.</p></div>
+      </aside>
+    </div>
+    <footer class="profile-footer"><a href="{% url 'home' %}">← Return to your pages</a><span>Made for the way you think.</span></footer>
+  </main>
+</div>
+{% endblock %}

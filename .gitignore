@@ -10,3 +10,6 @@ media/
 # Generated migration bytecode only; keep migration source files in version control
 **/migrations/__pycache__/
 **/migrations/*.py[cod]
+
+# Local database backups may contain credentials
+work/
