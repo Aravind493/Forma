@@ -1,1 +1,26 @@
-{% extends 'base.html' %}{% load static %}{% block title %}{{ page.title }} · Forma{% endblock %}{% block body %}<link rel="stylesheet" href="{% static 'share.css' %}"><link rel="stylesheet" href="{% static 'imported.css' %}"><main class="shared-wrap"><div class="shared-brand"><div class="workspace-logo">F</div><span>Shared with Forma</span></div><article class="shared-page"><div class="page-icon static-icon">{{ page.icon }}</div><h1>{{ page.title }}</h1><div class="blocks">{% for block in page.content %}{% include 'pages/shared_block.html' %}{% endfor %}</div></article><footer>Made with <strong>Forma</strong></footer></main>{% endblock %}
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{{ page.title }} · Forma{% endblock %}
+
+{% block body %}
+<link rel="stylesheet" href="{% static 'share.css' %}">
+<link rel="stylesheet" href="{% static 'imported.css' %}">
+
+<main class="shared-wrap">
+  <div class="shared-brand">
+    <div class="workspace-logo">F</div>
+    <span>Shared with Forma</span>
+  </div>
+  <article class="shared-page">
+    <div class="page-icon static-icon">{{ page.icon }}</div>
+    <h1>{{ page.title }}</h1>
+    <div class="blocks">
+      {% for block in page.content %}
+        {% include 'pages/shared_block.html' %}
+      {% endfor %}
+    </div>
+  </article>
+  <footer>Made with <strong>Forma</strong></footer>
+</main>
+{% endblock %}
