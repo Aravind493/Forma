@@ -145,7 +145,16 @@
     pending = true;
     setSaveState("Unsaved changes", "is-dirty");
 
-    if (options.captureHistory !== false) scheduleHistoryEntry();
+    if (options.captureHistory !== false) {
+      scheduleHistoryEntry();
+
+      // Keep Undo clickable while the debounced history entry is being recorded.
+      const snapshot = currentSnapshot();
+      if (history[historyIndex] && !sameSnapshot(snapshot, history[historyIndex])) {
+        undoButton.disabled = false;
+        redoButton.disabled = true;
+      }
+    }
     window.clearTimeout(draftTimer);
     draftTimer = window.setTimeout(() => {
       if (!writeLocalDraft()) setSaveState("Unsaved · local recovery unavailable", "is-error");
@@ -240,6 +249,29 @@
         const link = document.createElement("a");
         link.href = item.url || "#";
         link.textContent = item.text || "Open attachment";
+        if (type === "page_link") {
+          const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+          icon.className = "page-link-icon";
+          icon.setAttribute("aria-hidden", "true");
+          icon.setAttribute("viewBox", "0 0 20 20");
+          icon.setAttribute("fill", "none");
+          icon.setAttribute("stroke", "currentColor");
+          icon.setAttribute("stroke-width", "1.5");
+          icon.setAttribute("stroke-linecap", "round");
+          icon.setAttribute("stroke-linejoin", "round");
+          [
+            "M5.5 2.5h6L16 7v10.5a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1v-14a1 1 0 0 1 1-1Z",
+            "M11.5 2.5V7H16",
+            "M7.25 11h6",
+            "M7.25 14.25h6",
+          ].forEach((pathData) => {
+            const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            path.setAttribute("d", pathData);
+            icon.append(path);
+          });
+          link.prepend(icon);
+          link.className = "page-link-anchor";
+        }
         if (type === "link") {
           link.target = "_blank";
           link.rel = "noopener noreferrer";
@@ -401,10 +433,26 @@
       button.addEventListener("click", async () => {
         menu.remove();
         if (type === "child_page") {
+          const row = element.closest(".todo-row") || element;
+          const insertAt = Array.from(blockHost.children).indexOf(row);
           element.textContent = "";
           queueSave();
-          await flushSave();
-          await createPage(pageId);
+          const saved = await flushSave();
+          if (!saved) {
+            flash("Save the current edits before creating a nested page");
+            return;
+          }
+          const result = await createPage(pageId, insertAt, false);
+          if (result) {
+            row.remove();
+            const pageBlock = makeBlock({
+              type: "page_link",
+              text: "Untitled",
+              url: result.url,
+            });
+            blockHost.insertBefore(pageBlock, blockHost.children[insertAt] || null);
+            queueSave();
+          }
           return;
         }
 
@@ -463,8 +511,9 @@
     });
   }
 
-  async function createPage(parentId = null) {
+  async function createPage(parentId = null, insertAt = null, navigate = true) {
     const body = parentId ? { parent: parentId } : {};
+    if (parentId && Number.isInteger(insertAt)) body.insert_at = insertAt;
     const response = await fetch(app.dataset.createUrl, {
       method: "POST",
       headers: {
@@ -476,11 +525,12 @@
 
     if (response.ok) {
       const result = await response.json();
-      window.location.href = result.url;
-      return;
+      if (navigate) window.location.href = result.url;
+      return result;
     }
 
     flash("Could not create the page");
+    return null;
   }
 
   function recoverLocalDraft() {

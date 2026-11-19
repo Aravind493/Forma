@@ -920,3 +920,38 @@ button {
     max-width: 120px;
   }
 }
+
+.block.imported-page_link {
+  min-height: 32px;
+  padding: 2px 0;
+  white-space: normal;
+}
+
+.page-link-anchor {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 29px;
+  padding: 1px 5px 1px 2px;
+  border-radius: 4px;
+  color: #37352f;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background-color 0.12s ease;
+}
+
+.page-link-anchor:hover {
+  background: #f1f1ef;
+}
+
+.page-link-anchor:focus-visible {
+  outline: 2px solid #8e9b87;
+  outline-offset: 2px;
+}
+
+.page-link-icon {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  color: #8b8f87;
+}

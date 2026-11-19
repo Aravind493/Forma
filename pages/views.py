@@ -112,8 +112,28 @@ def create_page(request):
     try: data=json.loads(request.body or "{}")
     except ValueError: return HttpResponseBadRequest("Invalid JSON")
     parent=None
-    if data.get("parent"): parent=get_object_or_404(Page,id=data["parent"],workspace=workspace)
-    page=Page.objects.create(workspace=workspace,created_by=request.user,parent=parent,title="Untitled",icon="📄")
+    if data.get("parent"):
+        parent=get_object_or_404(Page,id=data["parent"],workspace=workspace)
+        if Membership.objects.get(workspace=workspace,user=request.user).role=="viewer":
+            return JsonResponse({"error":"Read only"},status=403)
+    insert_at=data.get("insert_at")
+    if insert_at is not None and (isinstance(insert_at,bool) or not isinstance(insert_at,int)):
+        return HttpResponseBadRequest("Invalid insertion position")
+    with transaction.atomic():
+        page=Page.objects.create(workspace=workspace,created_by=request.user,parent=parent,title="Untitled",icon="📄")
+        if parent:
+            blocks=parent.content if isinstance(parent.content,list) else []
+            page_block={"type":"page_link","text":page.title,"url":f"/page/{page.id}/"}
+            if insert_at is None:
+                blocks.append(page_block)
+            else:
+                position=max(0,min(insert_at,len(blocks)))
+                if position<len(blocks) and isinstance(blocks[position],dict) and blocks[position].get("type")=="paragraph" and not blocks[position].get("text","").strip():
+                    blocks[position]=page_block
+                else:
+                    blocks.insert(position,page_block)
+            parent.content=blocks
+            parent.save(update_fields=["content","updated_at"])
     return JsonResponse({"id":str(page.id),"url":f"/page/{page.id}/"},status=201)
 
 @login_required
@@ -124,6 +144,7 @@ def update_page(request,page_id):
     if member.role=="viewer": return JsonResponse({"error":"Read only"},status=403)
     try: data=json.loads(request.body)
     except (ValueError,TypeError): return HttpResponseBadRequest("Invalid JSON")
+    title_changed="title" in data and page.title!=str(data["title"])[:300]
     if "title" in data: page.title=str(data["title"])[:300]
     if "icon" in data: page.icon=str(data["icon"])[:16]
     if "content" in data:
@@ -141,7 +162,20 @@ def update_page(request,page_id):
                 rows=block.get("rows",[])
                 if not isinstance(rows,list) or len(rows)>2000 or any(not isinstance(row,list) or len(row)>100 or any(not isinstance(cell,str) or len(cell)>2000 for cell in row) for row in rows): return HttpResponseBadRequest("Invalid table content")
         page.content=data["content"]
-    page.save(); return JsonResponse({"ok":True,"updated_at":page.updated_at.isoformat()})
+    page.save()
+    if title_changed and page.parent_id:
+        parent=page.parent
+        blocks=parent.content if isinstance(parent.content,list) else []
+        page_url=f"/page/{page.id}/"
+        changed=False
+        for block in blocks:
+            if isinstance(block,dict) and block.get("type")=="page_link" and block.get("url")==page_url:
+                block["text"]=page.title
+                changed=True
+        if changed:
+            parent.content=blocks
+            parent.save(update_fields=["content","updated_at"])
+    return JsonResponse({"ok":True,"updated_at":page.updated_at.isoformat()})
 
 @login_required
 @require_POST
