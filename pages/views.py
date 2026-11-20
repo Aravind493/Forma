@@ -1,4 +1,6 @@
 import json
+import uuid
+from copy import deepcopy
 from collections import defaultdict
 from django.contrib import messages
 from django.contrib.auth import login
@@ -24,6 +26,21 @@ def _page_navigation(workspace):
     for page in pages:
         if page.parent_id in ids: children[page.parent_id].append(page)
         else: roots.append(page)
+    pages_by_id={page.id:page for page in pages}
+    for parent_id, child_pages in children.items():
+        parent=pages_by_id[parent_id]
+        block_order={
+            block.get("url"): position
+            for position, block in enumerate(parent.content if isinstance(parent.content,list) else [])
+            if isinstance(block,dict) and block.get("type")=="page_link"
+        }
+        child_pages.sort(
+            key=lambda child: (
+                block_order.get(f"/page/{child.id}/", len(block_order)),
+                child.created_at,
+                child.title,
+            )
+        )
     parent_ids={page.parent_id for page in pages if page.parent_id in ids}
     result=[]; visited=set()
     def add(page,depth):
@@ -33,6 +50,112 @@ def _page_navigation(workspace):
     for root in roots: add(root,0)
     for page in pages: add(page,0)
     return result
+
+def _page_sidebar_context(workspace,user):
+    active=workspace.pages.filter(is_archived=False)
+    archived_roots=workspace.pages.filter(is_archived=True).filter(
+        Q(parent__isnull=True)|Q(parent__is_archived=False)
+    ).order_by("-updated_at","title")
+    membership=Membership.objects.filter(workspace=workspace,user=user).only("role").first()
+    return {
+        "page_tree":_page_navigation(workspace),
+        "favorite_pages":active.filter(is_favorite=True).order_by("title")[:8],
+        "recent_pages":active.order_by("-updated_at","title")[:8],
+        "archived_pages":archived_roots[:30],
+        "can_edit_pages":bool(membership and membership.role!="viewer"),
+    }
+
+def _page_subtree_ids(page):
+    ids=[page.pk]
+    pending=[page.pk]
+    while pending:
+        child_ids=list(Page.objects.filter(workspace_id=page.workspace_id,parent_id__in=pending).values_list("id",flat=True))
+        pending=child_ids
+        ids.extend(child_ids)
+    return ids
+
+def _remove_page_reference(parent,page_id):
+    if not parent or not isinstance(parent.content,list):
+        return
+    page_url=f"/page/{page_id}/"
+    updated=[
+        block for block in parent.content
+        if not (isinstance(block,dict) and block.get("type")=="page_link" and block.get("url")==page_url)
+    ]
+    if updated!=parent.content:
+        parent.content=updated
+        parent.save(update_fields=["content","updated_at"])
+
+def _append_page_reference(parent,page):
+    if not parent:
+        return
+    blocks=parent.content if isinstance(parent.content,list) else []
+    page_url=f"/page/{page.id}/"
+    existing=next((
+        block for block in blocks
+        if isinstance(block,dict) and block.get("type")=="page_link" and block.get("url")==page_url
+    ),None)
+    if existing:
+        if existing.get("text")!=page.title:
+            existing["text"]=page.title
+            parent.content=blocks
+            parent.save(update_fields=["content","updated_at"])
+    else:
+        blocks.append({"type":"page_link","text":page.title,"url":page_url})
+        parent.content=blocks
+        parent.save(update_fields=["content","updated_at"])
+
+def _insert_page_reference_after(parent,reference_page,page):
+    if not parent:
+        return
+    blocks=parent.content if isinstance(parent.content,list) else []
+    page_url=f"/page/{page.id}/"
+    if any(isinstance(block,dict) and block.get("type")=="page_link" and block.get("url")==page_url for block in blocks):
+        return
+    reference_url=f"/page/{reference_page.id}/"
+    position=next((
+        index+1 for index,block in enumerate(blocks)
+        if isinstance(block,dict) and block.get("type")=="page_link" and block.get("url")==reference_url
+    ),len(blocks))
+    blocks.insert(position,{"type":"page_link","text":page.title,"url":page_url})
+    parent.content=blocks
+    parent.save(update_fields=["content","updated_at"])
+
+def _duplicate_page_tree(source,parent,creator,title=None,mapping=None):
+    if mapping is None:
+        mapping={}
+    duplicate=Page.objects.create(
+        workspace=source.workspace,
+        created_by=creator,
+        parent=parent,
+        title=title or source.title,
+        icon=source.icon,
+        content=[],
+    )
+    mapping[str(source.id)]=duplicate
+    children=list(source.children.filter(is_archived=False).order_by("created_at","title"))
+    for child in children:
+        _duplicate_page_tree(child,duplicate,creator,mapping=mapping)
+
+    content=deepcopy(source.content) if isinstance(source.content,list) else []
+    linked_ids=set()
+    for block in content:
+        if not isinstance(block,dict) or block.get("type")!="page_link":
+            continue
+        old_url=block.get("url","")
+        old_id=old_url.removeprefix("/page/").removesuffix("/")
+        copied=mapping.get(old_id)
+        if copied:
+            block["url"]=f"/page/{copied.id}/"
+            block["text"]=copied.title
+            linked_ids.add(str(copied.id))
+    for child in children:
+        copied=mapping[str(child.id)]
+        if str(copied.id) not in linked_ids:
+            content.append({"type":"page_link","text":copied.title,"url":f"/page/{copied.id}/"})
+    duplicate.content=content
+    duplicate.save(update_fields=["content"])
+    return duplicate
 
 def _new_workspace(user):
     base=slugify(user.username) or "workspace"; slug=base; i=2
@@ -63,7 +186,9 @@ def home(request):
 def page_view(request,page_id):
     workspace=_workspace(request.user)
     page=get_object_or_404(Page.objects.select_related("workspace"),id=page_id,workspace=workspace,is_archived=False)
-    return render(request,"pages/editor.html",{"workspace":workspace,"page_tree":_page_navigation(workspace),"page":page})
+    context=_page_sidebar_context(workspace,request.user)
+    context.update({"workspace":workspace,"page":page,"home_url":"/"})
+    return render(request,"pages/editor.html",context)
 
 @login_required
 @require_http_methods(["GET", "POST"])
@@ -119,12 +244,14 @@ def create_page(request):
     insert_at=data.get("insert_at")
     if insert_at is not None and (isinstance(insert_at,bool) or not isinstance(insert_at,int)):
         return HttpResponseBadRequest("Invalid insertion position")
+    inserted_at=None
     with transaction.atomic():
         page=Page.objects.create(workspace=workspace,created_by=request.user,parent=parent,title="Untitled",icon="📄")
         if parent:
             blocks=parent.content if isinstance(parent.content,list) else []
             page_block={"type":"page_link","text":page.title,"url":f"/page/{page.id}/"}
             if insert_at is None:
+                inserted_at=len(blocks)
                 blocks.append(page_block)
             else:
                 position=max(0,min(insert_at,len(blocks)))
@@ -132,9 +259,10 @@ def create_page(request):
                     blocks[position]=page_block
                 else:
                     blocks.insert(position,page_block)
+                inserted_at=position
             parent.content=blocks
             parent.save(update_fields=["content","updated_at"])
-    return JsonResponse({"id":str(page.id),"url":f"/page/{page.id}/"},status=201)
+    return JsonResponse({"id":str(page.id),"url":f"/page/{page.id}/","insert_at":inserted_at},status=201)
 
 @login_required
 @require_http_methods(["PATCH"])
@@ -181,8 +309,76 @@ def update_page(request,page_id):
 @require_POST
 def toggle_favorite(request,page_id):
     workspace=_workspace(request.user); page=get_object_or_404(Page,id=page_id,workspace=workspace)
-    page.is_favorite=not page.is_favorite; page.save(update_fields=["is_favorite","updated_at"])
+    page.is_favorite=not page.is_favorite; page.save(update_fields=["is_favorite"])
     return JsonResponse({"favorite":page.is_favorite})
+
+@login_required
+@require_POST
+def page_actions(request,page_id):
+    workspace=_workspace(request.user)
+    page=get_object_or_404(Page.objects.select_related("parent"),id=page_id,workspace=workspace)
+    membership=Membership.objects.get(workspace=workspace,user=request.user)
+    if membership.role=="viewer":
+        return JsonResponse({"error":"Read only"},status=403)
+    try:
+        data=json.loads(request.body or "{}")
+    except (ValueError,TypeError):
+        return HttpResponseBadRequest("Invalid JSON")
+    if not isinstance(data,dict):
+        return HttpResponseBadRequest("Invalid action")
+
+    action=data.get("action")
+    if action=="move":
+        parent_id=data.get("parent_id") or None
+        if parent_id:
+            try:
+                parent_id=uuid.UUID(str(parent_id))
+            except (ValueError,TypeError,AttributeError):
+                return HttpResponseBadRequest("Invalid destination page")
+        new_parent=get_object_or_404(Page,id=parent_id,workspace=workspace,is_archived=False) if parent_id else None
+        ancestor=new_parent
+        while ancestor:
+            if ancestor.id==page.id:
+                return JsonResponse({"error":"A page cannot be moved into itself or its own nested page."},status=400)
+            ancestor=ancestor.parent
+        if page.parent_id==getattr(new_parent,"id",None):
+            return JsonResponse({"ok":True})
+        with transaction.atomic():
+            _remove_page_reference(page.parent,page.id)
+            page.parent=new_parent
+            page.save(update_fields=["parent","updated_at"])
+            _append_page_reference(new_parent,page)
+        return JsonResponse({"ok":True})
+
+    if action=="duplicate":
+        with transaction.atomic():
+            duplicate=_duplicate_page_tree(page,page.parent,request.user,title=f"{page.title} (copy)"[:300])
+            _insert_page_reference_after(page.parent,page,duplicate)
+        return JsonResponse({"id":str(duplicate.id),"url":f"/page/{duplicate.id}/"},status=201)
+
+    if action=="archive":
+        with transaction.atomic():
+            _remove_page_reference(page.parent,page.id)
+            Page.objects.filter(id__in=_page_subtree_ids(page)).update(is_archived=True)
+        return JsonResponse({"ok":True})
+
+    if action=="restore":
+        if not page.is_archived:
+            return JsonResponse({"error":"Page is not archived"},status=400)
+        with transaction.atomic():
+            Page.objects.filter(id__in=_page_subtree_ids(page)).update(is_archived=False)
+            page.refresh_from_db(fields=["parent","title"])
+            if page.parent_id and page.parent and not page.parent.is_archived:
+                _append_page_reference(page.parent,page)
+        return JsonResponse({"ok":True})
+
+    if action=="delete":
+        with transaction.atomic():
+            _remove_page_reference(page.parent,page.id)
+            page.delete()
+        return JsonResponse({"ok":True})
+
+    return JsonResponse({"error":"Unknown page action"},status=400)
 
 @login_required
 def search(request):

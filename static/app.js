@@ -34,6 +34,9 @@
   let draftTimer = null;
   let pending = false;
   let saving = false;
+  let draggedBlock = null;
+  let dropTarget = null;
+  let dropAfterTarget = false;
   let history = [];
   let historyIndex = 0;
 
@@ -193,6 +196,8 @@
       removeDraftIfSaved(snapshot);
       document.getElementById("crumb-title").textContent = snapshot.title || "Untitled";
       document.title = (snapshot.title || "Untitled") + " · Forma";
+      syncSidebarPageTitle(pageId, snapshot.title || "Untitled");
+      promoteRecentPage(snapshot.title || "Untitled");
       editedLabel.textContent = "Edited just now";
 
       if (pending) {
@@ -253,6 +258,8 @@
           const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
           icon.className = "page-link-icon";
           icon.setAttribute("aria-hidden", "true");
+          icon.setAttribute("width", "16");
+          icon.setAttribute("height", "16");
           icon.setAttribute("viewBox", "0 0 20 20");
           icon.setAttribute("fill", "none");
           icon.setAttribute("stroke", "currentColor");
@@ -279,6 +286,7 @@
         element.append(link);
       }
 
+      addDragHandle(element);
       blockHost.append(element);
       return element;
     }
@@ -302,6 +310,7 @@
       });
 
       element.append(table);
+      addDragHandle(element);
       blockHost.append(element);
       return element;
     }
@@ -312,6 +321,7 @@
       element.dataset.type = type;
       element.contentEditable = "false";
       element.innerHTML = "<hr>";
+      addDragHandle(element);
       blockHost.append(element);
       return element;
     }
@@ -337,6 +347,7 @@
       });
 
       row.append(checkbox, element);
+      addDragHandle(row);
       blockHost.append(row);
       bindEditableBlock(element);
       if (focus) element.focus();
@@ -349,10 +360,22 @@
     element.dataset.type = type;
     element.dataset.placeholder = blockLabels[type] || "Type something…";
     element.textContent = item.text || "";
+    addDragHandle(element);
     blockHost.append(element);
     bindEditableBlock(element);
     if (focus) element.focus();
     return element;
+  }
+
+  function addDragHandle(block) {
+    const handle = document.createElement("button");
+    handle.className = "block-grip";
+    handle.type = "button";
+    handle.draggable = true;
+    handle.contentEditable = "false";
+    handle.title = "Drag to reorder";
+    handle.setAttribute("aria-label", "Drag to reorder block");
+    block.append(handle);
   }
 
   function renderBlocks(blocks) {
@@ -450,7 +473,8 @@
               text: "Untitled",
               url: result.url,
             });
-            blockHost.insertBefore(pageBlock, blockHost.children[insertAt] || null);
+            const position = Number.isInteger(result.insert_at) ? result.insert_at : insertAt;
+            blockHost.insertBefore(pageBlock, blockHost.children[position] || null);
             queueSave();
           }
           return;
@@ -586,6 +610,215 @@
     element.timer = window.setTimeout(() => element.remove(), 2600);
   }
 
+  function syncSidebarPageTitle(id, title) {
+    document.querySelectorAll(`[data-page-id="${id}"] .nav-title`).forEach((label) => {
+      label.textContent = title;
+    });
+    document.querySelectorAll(`.sidebar-page-link[data-page-id="${id}"] .nav-title`).forEach((label) => {
+      label.textContent = title;
+    });
+    document.querySelectorAll(`.sidebar-page-link[data-page-id="${id}"]`).forEach((link) => {
+      link.title = title;
+    });
+  }
+
+  function createQuickPageLink(id, title, icon = "📄") {
+    const link = document.createElement("a");
+    link.className = "sidebar-page-link";
+    link.dataset.pageId = id;
+    link.href = `/page/${id}/`;
+    const iconLabel = document.createElement("span");
+    iconLabel.textContent = icon;
+    const titleLabel = document.createElement("span");
+    titleLabel.className = "nav-title";
+    titleLabel.textContent = title;
+    link.append(iconLabel, titleLabel);
+    return link;
+  }
+
+  function promoteRecentPage(title) {
+    const section = document.getElementById("recent-section");
+    const list = document.getElementById("recent-list");
+    if (!section || !list) return;
+    let link = list.querySelector(`[data-page-id="${pageId}"]`);
+    if (!link) link = createQuickPageLink(pageId, title, pageIcon.textContent.trim());
+    link.querySelector(".nav-title").textContent = title;
+    list.prepend(link);
+    while (list.children.length > 8) list.lastElementChild.remove();
+    section.hidden = list.children.length === 0;
+  }
+
+  function syncFavoritePage(isFavorite) {
+    const section = document.getElementById("favorite-section");
+    const list = document.getElementById("favorite-list");
+    if (!section || !list) return;
+    const existing = list.querySelector(`[data-page-id="${pageId}"]`);
+    if (isFavorite && !existing) {
+      list.append(createQuickPageLink(pageId, titleInput.value || "Untitled", pageIcon.textContent.trim()));
+    } else if (!isFavorite && existing) {
+      existing.remove();
+    }
+    section.hidden = list.children.length === 0;
+  }
+
+  async function sendPageAction(row, action, extra = {}) {
+    if (!(await flushSave())) {
+      flash("Save your current edits before changing pages");
+      return null;
+    }
+    const response = await fetch(row.dataset.actionsUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": csrfToken,
+      },
+      body: JSON.stringify({ action, ...extra }),
+    });
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({}));
+      flash(result.error || "Could not update this page");
+      return null;
+    }
+    return response.json();
+  }
+
+  const pageNav = document.getElementById("page-nav");
+  const movePageDialog = document.getElementById("move-page-dialog");
+  const movePageParent = document.getElementById("move-page-parent");
+  let pageBeingMoved = null;
+
+  function closePageActionMenus(except = null) {
+    pageNav?.querySelectorAll(".nav-row").forEach((row) => {
+      if (row === except) return;
+      const menu = row.querySelector("[data-page-action-menu]");
+      const toggle = row.querySelector("[data-action-menu-toggle]");
+      if (menu) menu.hidden = true;
+      toggle?.setAttribute("aria-expanded", "false");
+    });
+  }
+
+  function openMoveDialog(row) {
+    pageBeingMoved = row;
+    movePageParent.replaceChildren();
+    const rootOption = document.createElement("option");
+    rootOption.value = "";
+    rootOption.textContent = "Workspace root";
+    movePageParent.append(rootOption);
+
+    const rows = Array.from(pageNav.querySelectorAll(".nav-row"));
+    const descendants = new Set();
+    let changed = true;
+    descendants.add(row.dataset.pageId);
+    while (changed) {
+      changed = false;
+      rows.forEach((candidate) => {
+        if (descendants.has(candidate.dataset.parentId) && !descendants.has(candidate.dataset.pageId)) {
+          descendants.add(candidate.dataset.pageId);
+          changed = true;
+        }
+      });
+    }
+
+    rows.forEach((candidate) => {
+      if (descendants.has(candidate.dataset.pageId)) return;
+      const option = document.createElement("option");
+      option.value = candidate.dataset.pageId;
+      const indent = "— ".repeat(Number(candidate.dataset.depth || 0));
+      option.textContent = indent + candidate.querySelector(".nav-title").textContent;
+      movePageParent.append(option);
+    });
+    movePageParent.value = row.dataset.parentId || "";
+    movePageDialog.showModal();
+  }
+
+  async function handlePageAction(row, action) {
+    const id = row.dataset.pageId;
+    const title = row.querySelector(".nav-title")?.textContent.trim() || "Untitled";
+
+    if (action === "rename") {
+      const newTitle = window.prompt("Rename page", title)?.trim();
+      if (!newTitle || newTitle === title) return;
+      if (!(await flushSave())) {
+        flash("Save your current edits before renaming pages");
+        return;
+      }
+      const response = await fetch(row.dataset.updateUrl, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+        body: JSON.stringify({ title: newTitle.slice(0, 300) }),
+      });
+      if (!response.ok) {
+        flash("Could not rename this page");
+        return;
+      }
+      window.location.reload();
+      return;
+    }
+
+    if (action === "move") {
+      openMoveDialog(row);
+      return;
+    }
+
+    if (action === "archive" && !window.confirm(`Archive “${title}” and its nested pages? You can restore it later.`)) return;
+    if (action === "delete" && !window.confirm(`Permanently delete “${title}” and its nested pages? This cannot be undone.`)) return;
+
+    const result = await sendPageAction(row, action);
+    if (!result) return;
+    if (action === "duplicate" && result.url) {
+      window.location.href = result.url;
+      return;
+    }
+    if ((action === "archive" || action === "delete") && id === pageId) {
+      window.location.href = app.dataset.homeUrl || "/";
+      return;
+    }
+    window.location.reload();
+  }
+
+  pageNav?.addEventListener("click", (event) => {
+    const toggle = event.target.closest("[data-action-menu-toggle]");
+    if (toggle) {
+      event.preventDefault();
+      const row = toggle.closest(".nav-row");
+      const menu = row.querySelector("[data-page-action-menu]");
+      const willOpen = menu.hidden;
+      closePageActionMenus(row);
+      menu.hidden = !willOpen;
+      toggle.setAttribute("aria-expanded", String(willOpen));
+      return;
+    }
+
+    const actionButton = event.target.closest("[data-page-action]");
+    if (!actionButton) return;
+    const row = actionButton.closest(".nav-row");
+    closePageActionMenus();
+    handlePageAction(row, actionButton.dataset.pageAction);
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest("#page-nav")) closePageActionMenus();
+  });
+
+  document.getElementById("confirm-move-page").addEventListener("click", async () => {
+    if (!pageBeingMoved) return;
+    const result = await sendPageAction(pageBeingMoved, "move", { parent_id: movePageParent.value });
+    if (!result) return;
+    movePageDialog.close();
+    window.location.reload();
+  });
+  document.getElementById("cancel-move-page").addEventListener("click", () => movePageDialog.close());
+
+  document.getElementById("archived-list")?.addEventListener("click", async (event) => {
+    const restore = event.target.closest("[data-restore-page]");
+    const remove = event.target.closest("[data-delete-archived]");
+    if (!restore && !remove) return;
+    const row = event.target.closest(".archived-row");
+    if (remove && !window.confirm("Permanently delete this archived page and its nested pages? This cannot be undone.")) return;
+    const result = await sendPageAction(row, restore ? "restore" : "delete");
+    if (result) window.location.reload();
+  });
+
   function showShareDialog(enabled, url = "") {
     const enableButton = document.getElementById("enable-share");
     const disableButton = document.getElementById("disable-share");
@@ -638,7 +871,63 @@
   document.getElementById("add-block").addEventListener("click", () => makeBlock({}, true));
   undoButton.addEventListener("click", undo);
   redoButton.addEventListener("click", redo);
+
+  blockHost.addEventListener("dragstart", (event) => {
+    const handle = event.target.closest(".block-grip");
+    if (!handle) return;
+
+    draggedBlock = handle.parentElement;
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", "forma-block");
+    window.setTimeout(() => draggedBlock?.classList.add("is-dragging"), 0);
+  });
+
+  blockHost.addEventListener("dragover", (event) => {
+    if (!draggedBlock) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+
+    const target = event.target.closest("#blocks > *");
+    blockHost.querySelectorAll(".drop-before, .drop-after").forEach((block) => {
+      block.classList.remove("drop-before", "drop-after");
+    });
+    if (!target || target === draggedBlock) {
+      dropTarget = null;
+      return;
+    }
+
+    dropTarget = target;
+    dropAfterTarget = event.clientY > target.getBoundingClientRect().top
+      + target.getBoundingClientRect().height / 2;
+    target.classList.add(dropAfterTarget ? "drop-after" : "drop-before");
+  });
+
+  blockHost.addEventListener("drop", (event) => {
+    if (!draggedBlock) return;
+    event.preventDefault();
+
+    if (dropTarget && dropTarget !== draggedBlock && dropTarget.parentElement === blockHost) {
+      const reference = dropAfterTarget ? dropTarget.nextElementSibling : dropTarget;
+      blockHost.insertBefore(draggedBlock, reference);
+      queueSave();
+    } else if (!dropTarget) {
+      blockHost.append(draggedBlock);
+      queueSave();
+    }
+    clearDragState();
+  });
+
+  blockHost.addEventListener("dragend", clearDragState);
   document.addEventListener("keydown", handleShortcuts);
+
+  function clearDragState() {
+    blockHost.querySelectorAll(".is-dragging, .drop-before, .drop-after").forEach((block) => {
+      block.classList.remove("is-dragging", "drop-before", "drop-after");
+    });
+    draggedBlock = null;
+    dropTarget = null;
+    dropAfterTarget = false;
+  }
 
   const iconChoices = ["📄", "📝", "💡", "📚", "🎯", "🌱", "🚀", "✨", "📌", "🧠"];
   function cyclePageIcon() {
@@ -660,15 +949,25 @@
     favoriteButton.style.color = "#bd9352";
   }
   favoriteButton.addEventListener("click", async (event) => {
-    const response = await fetch(app.dataset.favoriteUrl, {
-      method: "POST",
-      headers: { "X-CSRFToken": csrfToken },
-    });
-    if (!response.ok) return;
+    if (!(await flushSave())) {
+      flash("Save your current edits before changing favorites");
+      return;
+    }
+    try {
+      const response = await fetch(app.dataset.favoriteUrl, {
+        method: "POST",
+        headers: { "X-CSRFToken": csrfToken },
+      });
+      if (!response.ok) throw new Error("Favorite update failed");
 
-    const result = await response.json();
-    event.currentTarget.textContent = result.favorite ? "★" : "☆";
-    event.currentTarget.style.color = result.favorite ? "#bd9352" : "";
+      const result = await response.json();
+      app.dataset.favorite = String(result.favorite);
+      event.currentTarget.textContent = result.favorite ? "★" : "☆";
+      event.currentTarget.style.color = result.favorite ? "#bd9352" : "";
+      syncFavoritePage(result.favorite);
+    } catch (error) {
+      flash("Could not update favorites");
+    }
   });
 
   const shareDialog = document.getElementById("share-dialog");

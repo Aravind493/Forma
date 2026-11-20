@@ -147,8 +147,56 @@ button {
 }
 
 .page-nav {
-  overflow: auto;
+  overflow: visible;
+  flex: none;
+}
+
+.sidebar-scroll {
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.quick-nav-section {
+  margin: 0 0 18px;
+}
+
+.sidebar-section-label,
+.archived-section summary {
+  margin: 0 0 6px;
+  padding: 0 10px;
+  color: #a0a198;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .09em;
+}
+
+.quick-nav-list {
+  display: grid;
+  gap: 1px;
+}
+
+.sidebar-page-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 5px;
+  color: #5f605b;
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.sidebar-page-link:hover {
+  background: #f0f0ec;
+}
+
+.sidebar-page-link > span:first-child {
+  flex: 0 0 auto;
+  font-size: 14px;
 }
 
 .nav-item {
@@ -354,6 +402,64 @@ button {
   overflow-wrap: anywhere;
 }
 
+.block-grip {
+  position: absolute;
+  z-index: 1;
+  top: 4px;
+  left: -29px;
+  display: grid;
+  width: 22px;
+  height: 24px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #a0a198;
+  cursor: grab;
+  font-size: 18px;
+  line-height: 1;
+  opacity: 0;
+  user-select: none;
+}
+
+.block-grip:active {
+  cursor: grabbing;
+}
+
+.block-grip::before {
+  content: "⠿";
+}
+
+.block:hover > .block-grip,
+.block:focus-within > .block-grip,
+.todo-row:hover > .block-grip,
+.todo-row:focus-within > .block-grip,
+.block-grip:focus-visible {
+  opacity: 1;
+}
+
+.block-grip:hover,
+.block-grip:focus-visible {
+  background: #f0f1ed;
+  color: #4d554b;
+}
+
+.block.is-dragging,
+.todo-row.is-dragging {
+  opacity: 0.45;
+}
+
+.block.drop-before,
+.todo-row.drop-before {
+  box-shadow: inset 0 2px #4b82d1;
+}
+
+.block.drop-after,
+.todo-row.drop-after {
+  box-shadow: inset 0 -2px #4b82d1;
+}
+
 .block:focus {
   outline: 0;
 }
@@ -416,6 +522,7 @@ button {
 }
 
 .todo-row {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: 9px;
@@ -919,39 +1026,4 @@ button {
   .save-state {
     max-width: 120px;
   }
-}
-
-.block.imported-page_link {
-  min-height: 32px;
-  padding: 2px 0;
-  white-space: normal;
-}
-
-.page-link-anchor {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 29px;
-  padding: 1px 5px 1px 2px;
-  border-radius: 4px;
-  color: #37352f;
-  font-weight: 500;
-  text-decoration: none;
-  transition: background-color 0.12s ease;
-}
-
-.page-link-anchor:hover {
-  background: #f1f1ef;
-}
-
-.page-link-anchor:focus-visible {
-  outline: 2px solid #8e9b87;
-  outline-offset: 2px;
-}
-
-.page-link-icon {
-  flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
-  color: #8b8f87;
 }

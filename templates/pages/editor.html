@@ -20,6 +20,7 @@
   data-share-url="{% url 'share_page' page.id %}"
   data-create-url="{% url 'create_page' %}"
   data-search-url="{% url 'search' %}"
+  data-home-url="{{ home_url }}"
 >
   <aside class="sidebar">
     <div class="workspace-head">
@@ -34,35 +35,91 @@
       <button id="search-open" type="button"><span>⌕</span> Search <kbd>⌘ K</kbd></button>
     </div>
 
-    <div class="section-label">
-      <span>WORKSPACE</span>
-      <div class="new-page-container">
-        <button id="new-page" type="button" title="Create page" aria-expanded="false">＋</button>
-        <div id="new-page-menu" hidden>
-          <button type="button" data-new-page="root">New page</button>
-          <button type="button" data-new-page="child">New nested page</button>
+    <div class="sidebar-scroll">
+      <section class="quick-nav-section" id="favorite-section" {% if not favorite_pages %}hidden{% endif %}>
+        <h2 class="sidebar-section-label">FAVORITES</h2>
+        <div class="quick-nav-list" id="favorite-list">
+          {% for item in favorite_pages %}
+            <a class="sidebar-page-link" data-page-id="{{ item.id }}" href="{% url 'page' item.id %}">
+              <span>{{ item.icon }}</span><span class="nav-title">{{ item.title|default:'Untitled' }}</span>
+            </a>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="quick-nav-section" id="recent-section" {% if not recent_pages %}hidden{% endif %}>
+        <h2 class="sidebar-section-label">RECENTLY EDITED</h2>
+        <div class="quick-nav-list" id="recent-list">
+          {% for item in recent_pages %}
+            <a class="sidebar-page-link" data-page-id="{{ item.id }}" href="{% url 'page' item.id %}">
+              <span>{{ item.icon }}</span><span class="nav-title">{{ item.title|default:'Untitled' }}</span>
+            </a>
+          {% endfor %}
+        </div>
+      </section>
+
+      <div class="section-label">
+        <span>WORKSPACE</span>
+        <div class="new-page-container">
+          <button id="new-page" type="button" title="Create page" aria-expanded="false">＋</button>
+          <div id="new-page-menu" hidden>
+            <button type="button" data-new-page="root">New page</button>
+            <button type="button" data-new-page="child">New nested page</button>
+          </div>
         </div>
       </div>
-    </div>
 
-    <nav class="page-nav" aria-label="Workspace pages">
-      {% for entry in page_tree %}
-        {% with item=entry.page %}
-          <div class="nav-row" data-depth="{{ entry.level }}" style="margin-left:{{ entry.indent }}px">
-            {% if entry.has_children %}
-              <button class="tree-toggle" type="button" data-tree-toggle aria-expanded="true" aria-label="Collapse {{ item.title }}">⌄</button>
-            {% else %}
-              <span class="tree-spacer"></span>
-            {% endif %}
-            <a class="nav-item {% if item.id == page.id %}active{% endif %}" href="{% url 'page' item.id %}">
-              <span>{{ item.icon }}</span>
-              <span class="nav-title">{{ item.title|default:'Untitled' }}</span>
-              <span class="nav-more">···</span>
-            </a>
+      <nav class="page-nav" id="page-nav" aria-label="Workspace pages">
+        {% for entry in page_tree %}
+          {% with item=entry.page %}
+            <div
+              class="nav-row"
+              data-depth="{{ entry.level }}"
+              data-page-id="{{ item.id }}"
+              data-parent-id="{{ item.parent_id|default:'' }}"
+              data-actions-url="{% url 'page_actions' item.id %}"
+              data-update-url="{% url 'update_page' item.id %}"
+              style="margin-left:{{ entry.indent }}px"
+            >
+              {% if entry.has_children %}
+                <button class="tree-toggle" type="button" data-tree-toggle aria-expanded="true" aria-label="Collapse {{ item.title }}">⌄</button>
+              {% else %}
+                <span class="tree-spacer"></span>
+              {% endif %}
+              <a class="nav-item {% if item.id == page.id %}active{% endif %}" data-page-id="{{ item.id }}" href="{% url 'page' item.id %}">
+                <span>{{ item.icon }}</span>
+                <span class="nav-title">{{ item.title|default:'Untitled' }}</span>
+              </a>
+              {% if can_edit_pages %}
+                <button class="nav-actions" type="button" data-action-menu-toggle aria-expanded="false" aria-label="Actions for {{ item.title }}">···</button>
+                <div class="page-action-menu" data-page-action-menu hidden>
+                  <button type="button" data-page-action="rename">Rename</button>
+                  <button type="button" data-page-action="move">Move to</button>
+                  <button type="button" data-page-action="duplicate">Duplicate</button>
+                  <button type="button" data-page-action="archive">Archive</button>
+                  <button type="button" class="danger-action" data-page-action="delete">Delete</button>
+                </div>
+              {% endif %}
+            </div>
+          {% endwith %}
+        {% endfor %}
+      </nav>
+
+      {% if can_edit_pages %}
+        <details class="archived-section" id="archived-section" {% if not archived_pages %}hidden{% endif %}>
+          <summary>ARCHIVED</summary>
+          <div class="archived-list" id="archived-list">
+            {% for item in archived_pages %}
+              <div class="archived-row" data-page-id="{{ item.id }}" data-actions-url="{% url 'page_actions' item.id %}">
+                <span class="archived-title">{{ item.icon }} {{ item.title|default:'Untitled' }}</span>
+                <button type="button" data-restore-page>Restore</button>
+                <button type="button" class="danger-action" data-delete-archived>Delete</button>
+              </div>
+            {% endfor %}
           </div>
-        {% endwith %}
-      {% endfor %}
-    </nav>
+        </details>
+      {% endif %}
+    </div>
 
     <a class="import-link" href="{% url 'import_notion' %}"><span>⇧</span> Import from Notion</a>
     <div class="sidebar-bottom">
@@ -140,6 +197,16 @@
     </div>
     <button id="enable-share" class="primary" type="button">Create public link</button>
     <button id="disable-share" type="button" hidden>Turn off link</button>
+  </dialog>
+
+  <dialog id="move-page-dialog" class="move-page-dialog">
+    <h2>Move page</h2>
+    <label for="move-page-parent">Choose a destination</label>
+    <select id="move-page-parent"></select>
+    <div class="move-page-actions">
+      <button type="button" id="cancel-move-page">Cancel</button>
+      <button type="button" id="confirm-move-page" class="primary">Move page</button>
+    </div>
   </dialog>
 
   <form class="hidden-csrf">{% csrf_token %}</form>
