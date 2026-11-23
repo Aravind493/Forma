@@ -148,6 +148,9 @@
 }
 
 .profile-avatar {
+  position: relative;
+  overflow: hidden;
+  flex: 0 0 auto;
   width: 62px;
   height: 62px;
   display: grid;
@@ -158,6 +161,69 @@
   color: #354839;
   font: 600 27px Georgia,serif;
   box-shadow: 0 5px 18px #1112;
+}
+
+.profile-avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.profile-avatar span {
+  position: relative;
+  z-index: 1;
+}
+
+.avatar-upload-field .avatar-file-input {
+  width: 100%;
+  height: auto;
+  padding: 9px;
+  border: 1px dashed #d9dfd5;
+  border-radius: 8px;
+  background: #fafbf9;
+  color: #69736a;
+  font-size: 11px;
+}
+
+.avatar-upload-field .avatar-file-input::file-selector-button {
+  margin-right: 10px;
+  padding: 7px 10px;
+  border: 1px solid #e2e7df;
+  border-radius: 6px;
+  background: #fff;
+  color: #49624e;
+  font: inherit;
+  cursor: pointer;
+}
+
+.avatar-upload-field .avatar-file-input::file-selector-button:hover {
+  background: #f0f4ed;
+}
+
+.avatar-remove-option {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #757b72;
+  font-size: 10px;
+}
+
+.avatar-remove-option .avatar-remove-input {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #557c62;
+}
+
+.avatar-remove-option label {
+  margin: 0;
+  cursor: pointer;
+}
+
+.avatar-remove-option label:hover {
+  color: #a34b42;
 }
 
 .hero-kicker {
@@ -434,6 +500,28 @@
 
 .signout-card {
   padding: 19px;
+}
+
+.password-card {
+  padding: 19px;
+}
+
+.password-form {
+  display: grid;
+  gap: 13px;
+}
+
+.password-form .field input {
+  font-family: inherit;
+}
+
+.password-form .errorlist {
+  margin-top: -3px;
+}
+
+.password-form .save-profile {
+  width: 100%;
+  margin-top: 3px;
 }
 
 .signout-icon {

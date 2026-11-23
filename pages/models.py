@@ -15,6 +15,7 @@ class Membership(models.Model):
 
 class Profile(models.Model):
     user=models.OneToOneField(settings.AUTH_USER_MODEL,on_delete=models.CASCADE,related_name="profile")
+    avatar=models.ImageField(upload_to="profile_avatars/",blank=True)
     bio=models.CharField(max_length=500,blank=True)
     job_title=models.CharField(max_length=120,blank=True)
     location=models.CharField(max_length=120,blank=True)

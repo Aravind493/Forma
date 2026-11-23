@@ -4,8 +4,9 @@ from copy import deepcopy
 from collections import defaultdict
 from django.contrib import messages
 from django.contrib.auth import login
+from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.decorators import login_required
-from django.contrib.auth.forms import UserCreationForm
+from django.contrib.auth.forms import PasswordChangeForm, UserCreationForm
 from django.db.models import Q
 from django.db import transaction
 from django.http import JsonResponse, HttpResponseBadRequest
@@ -196,21 +197,41 @@ def profile_view(request):
     profile, _ = Profile.objects.get_or_create(user=request.user)
     workspace = _workspace(request.user)
     if request.method == "POST":
-        account_form = AccountDetailsForm(request.POST, instance=request.user)
-        profile_form = ProfileDetailsForm(request.POST, instance=profile)
-        if account_form.is_valid() and profile_form.is_valid():
-            with transaction.atomic():
-                account_form.save()
-                profile_form.save()
-            messages.success(request, "Your profile has been saved.")
-            return redirect("profile")
+        if request.POST.get("form_type") == "password":
+            account_form = AccountDetailsForm(instance=request.user)
+            profile_form = ProfileDetailsForm(instance=profile)
+            password_form = PasswordChangeForm(request.user, request.POST)
+            if password_form.is_valid():
+                user = password_form.save()
+                update_session_auth_hash(request, user)
+                messages.success(request, "Your password has been changed.")
+                return redirect("profile")
+        else:
+            account_form = AccountDetailsForm(request.POST, instance=request.user)
+            profile_form = ProfileDetailsForm(request.POST, request.FILES, instance=profile)
+            password_form = PasswordChangeForm(request.user)
+            previous_avatar_name = profile.avatar.name if profile.avatar else None
+            avatar_storage = profile.avatar.storage
+            if account_form.is_valid() and profile_form.is_valid():
+                with transaction.atomic():
+                    account_form.save()
+                    profile_form.save()
+                profile.refresh_from_db(fields=["avatar"])
+                current_avatar_name = profile.avatar.name
+                if previous_avatar_name and previous_avatar_name != current_avatar_name:
+                    avatar_storage.delete(previous_avatar_name)
+                messages.success(request, "Your profile has been saved.")
+                return redirect("profile")
     else:
         account_form = AccountDetailsForm(instance=request.user)
         profile_form = ProfileDetailsForm(instance=profile)
+        password_form = PasswordChangeForm(request.user)
     return render(request, "pages/profile.html", {
         "workspace": workspace,
+        "profile": profile,
         "account_form": account_form,
         "profile_form": profile_form,
+        "password_form": password_form,
         "page_count": workspace.pages.count() if workspace else 0,
     })
 
