@@ -1,7 +1,11 @@
 import json
 import uuid
+import time
 from copy import deepcopy
 from collections import defaultdict
+from pathlib import Path
+from pathlib import PurePosixPath
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import login
 from django.contrib.auth import update_session_auth_hash
@@ -9,13 +13,14 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import PasswordChangeForm, UserCreationForm
 from django.db.models import Q
 from django.db import transaction
+from django.core.files import File
 from django.http import JsonResponse, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.text import slugify
 from django.views.decorators.http import require_http_methods, require_POST
 from .models import Workspace, Membership, Page, Profile
 from .forms import AccountDetailsForm, ProfileDetailsForm
-from .notion_import import import_notion_export, MAX_BYTES
+from .notion_import import import_notion_export, preview_notion_export, MAX_BYTES
 
 def _workspace(user):
     member=Membership.objects.filter(user=user).select_related("workspace").first()
@@ -407,17 +412,139 @@ def search(request):
     results=workspace.pages.filter(is_archived=False).filter(Q(title__icontains=query)|Q(content__icontains=query))[:20] if query else []
     return JsonResponse({"results":[{"id":str(p.id),"title":p.title,"icon":p.icon,"url":f"/page/{p.id}/"} for p in results]})
 
+NOTION_PREVIEW_SESSION_KEY="notion_import_preview"
+NOTION_PREVIEW_TTL=24*60*60
+
+def _notion_preview_directory():
+    directory=Path(settings.BASE_DIR)/"work"/"notion_import_previews"
+    directory.mkdir(mode=0o700,parents=True,exist_ok=True)
+    return directory
+
+def _notion_preview_path(token):
+    try:
+        safe_token=uuid.UUID(hex=str(token)).hex
+    except (ValueError,TypeError,AttributeError):
+        return None
+    return _notion_preview_directory()/f"{safe_token}.upload"
+
+def _remove_notion_preview(preview):
+    path=_notion_preview_path(preview.get("token")) if isinstance(preview,dict) else None
+    if path and path.exists() and path.resolve().parent==_notion_preview_directory().resolve():
+        path.unlink()
+
+def _cleanup_expired_notion_previews():
+    directory=_notion_preview_directory()
+    cutoff=time.time()-NOTION_PREVIEW_TTL
+    for path in directory.glob("*.upload"):
+        try:
+            if path.is_file() and path.stat().st_mtime<cutoff and path.resolve().parent==directory.resolve():
+                path.unlink()
+        except OSError:
+            continue
+
+def _current_notion_preview(request):
+    preview=request.session.get(NOTION_PREVIEW_SESSION_KEY)
+    if not isinstance(preview,dict):
+        return None
+    created_at=preview.get("created_at",0)
+    if not isinstance(created_at,(int,float)) or time.time()-created_at>NOTION_PREVIEW_TTL:
+        _remove_notion_preview(preview)
+        request.session.pop(NOTION_PREVIEW_SESSION_KEY,None)
+        return None
+    path=_notion_preview_path(preview.get("token"))
+    if not path or not path.is_file():
+        request.session.pop(NOTION_PREVIEW_SESSION_KEY,None)
+        return None
+    return preview
+
 @login_required
 @require_http_methods(["GET","POST"])
 def import_notion(request):
     workspace=_workspace(request.user)
-    if request.method=="GET": return render(request,"pages/import.html",{"workspace":workspace,"page_tree":_page_navigation(workspace)})
+    _cleanup_expired_notion_previews()
+
+    if request.method=="GET":
+        preview=_current_notion_preview(request)
+        if preview:
+            preview=dict(preview)
+            preview["added_count"]=sum(item["status"]=="add" for item in preview["pages"])
+            preview["updated_count"]=sum(item["status"]=="update" for item in preview["pages"])
+        return render(request,"pages/import.html",{
+            "workspace":workspace,
+            "page_tree":_page_navigation(workspace),
+            "import_preview":preview,
+        })
+
+    action=request.POST.get("action","preview")
+    preview=_current_notion_preview(request)
+
+    if action=="cancel":
+        posted_token=request.POST.get("preview_token","")
+        if preview and posted_token==preview.get("token"):
+            _remove_notion_preview(preview)
+            request.session.pop(NOTION_PREVIEW_SESSION_KEY,None)
+        messages.info(request,"Import preview cancelled. No pages were changed.")
+        return redirect("import_notion")
+
+    if action=="confirm":
+        posted_token=request.POST.get("preview_token","")
+        if not preview or posted_token!=preview.get("token"):
+            messages.error(request,"That import preview has expired. Choose the export again.")
+            return redirect("import_notion")
+        path=_notion_preview_path(preview.get("token"))
+        try:
+            with path.open("rb") as staged_file:
+                upload=File(staged_file,name=preview["name"])
+                with transaction.atomic():
+                    current_pages=preview_notion_export(upload,workspace,request.user)
+                    previous_actions=[(item["name"],item["status"]) for item in preview["pages"]]
+                    current_actions=[(item["name"],item["status"]) for item in current_pages]
+                    if current_actions!=previous_actions:
+                        preview["pages"]=current_pages
+                        request.session[NOTION_PREVIEW_SESSION_KEY]=preview
+                        request.session.modified=True
+                        messages.info(request,"Your pages changed after the preview. Review the updated add/update list and confirm again.")
+                        return redirect("import_notion")
+                    upload.seek(0)
+                    imported,assets=import_notion_export(upload,workspace,request.user)
+        except Exception as exc:
+            messages.error(request,f"Import failed: {exc}. Your preview is still available to retry or cancel.")
+            return redirect("import_notion")
+
+        _remove_notion_preview(preview)
+        request.session.pop(NOTION_PREVIEW_SESSION_KEY,None)
+        messages.success(request,f"Imported or updated {imported} pages and preserved {assets} files.")
+        return redirect("home")
+
+    if action!="preview":
+        return HttpResponseBadRequest("Unknown import action")
+
     upload=request.FILES.get("export")
-    if not upload: messages.error(request,"Choose a Notion HTML file or ZIP export."); return redirect("import_notion")
+    if not upload:
+        messages.error(request,"Choose a Notion export to preview.")
+        return redirect("import_notion")
+    if upload.size>MAX_BYTES:
+        messages.error(request,"The export must be smaller than 1 GB.")
+        return redirect("import_notion")
+
+    safe_name=PurePosixPath(upload.name.replace("\\","/")).name[:255]
+    token=uuid.uuid4().hex
+    new_preview={"token":token,"name":safe_name,"size":upload.size,"created_at":time.time()}
+    path=_notion_preview_path(token)
     try:
-        if upload.size>MAX_BYTES: raise ValueError("The export must be smaller than 1 GB.")
-        imported,assets=import_notion_export(upload,workspace,request.user)
+        with path.open("wb") as destination:
+            for chunk in upload.chunks():
+                destination.write(chunk)
+        with path.open("rb") as staged_file:
+            staged_upload=File(staged_file,name=safe_name)
+            new_preview["pages"]=preview_notion_export(staged_upload,workspace,request.user)
     except Exception as exc:
-        messages.error(request,str(exc)); return redirect("import_notion")
-    messages.success(request,f"Imported or updated {imported} pages and preserved {assets} files.")
-    return redirect("home")
+        _remove_notion_preview(new_preview)
+        messages.error(request,f"Could not preview this export: {exc}")
+        return redirect("import_notion")
+
+    if preview:
+        _remove_notion_preview(preview)
+    request.session[NOTION_PREVIEW_SESSION_KEY]=new_preview
+    request.session.modified=True
+    return redirect("import_notion")

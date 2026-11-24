@@ -57,17 +57,76 @@
         {% endfor %}
       {% endif %}
 
+      {% if import_preview %}
+        <section class="import-preview-card" aria-labelledby="preview-title">
+          <div class="preview-kicker">REVIEW BEFORE IMPORTING</div>
+          <h2 id="preview-title">{{ import_preview.name }}</h2>
+          <p class="preview-explanation">
+            No pages have changed yet. Confirm to apply these updates, or cancel to discard this preview.
+          </p>
+
+          <div class="preview-summary">
+            <div class="preview-count preview-added">
+              <strong>{{ import_preview.added_count }}</strong>
+              <span>to add</span>
+            </div>
+            <div class="preview-count preview-updated">
+              <strong>{{ import_preview.updated_count }}</strong>
+              <span>to update</span>
+            </div>
+            <div class="preview-count">
+              <strong>{{ import_preview.pages|length }}</strong>
+              <span>pages total</span>
+            </div>
+          </div>
+
+          {% if import_preview.updated_count %}
+            <p class="preview-warning">
+              Updating a page replaces its saved content with the version in this export.
+            </p>
+          {% endif %}
+
+          <div class="preview-page-list" aria-label="Page import actions">
+            {% for item in import_preview.pages %}
+              <div class="preview-page-row">
+                <span class="preview-status {% if item.status == 'update' %}is-update{% else %}is-add{% endif %}">
+                  {% if item.status == 'update' %}Update{% else %}Add{% endif %}
+                </span>
+                <span class="preview-page-title" title="{{ item.name }}">{{ item.title }}</span>
+                <span class="preview-page-name">{{ item.name }}</span>
+              </div>
+            {% endfor %}
+          </div>
+
+          <div class="preview-actions">
+            <form method="post">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="cancel">
+              <input type="hidden" name="preview_token" value="{{ import_preview.token }}">
+              <button class="secondary" type="submit">Cancel import</button>
+            </form>
+            <form method="post">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="confirm">
+              <input type="hidden" name="preview_token" value="{{ import_preview.token }}">
+              <button class="primary" type="submit">Import {{ import_preview.pages|length }} pages <span>→</span></button>
+            </form>
+          </div>
+        </section>
+      {% endif %}
+
       <form method="post" enctype="multipart/form-data" class="upload-card">
         {% csrf_token %}
+        <input type="hidden" name="action" value="preview">
         <div class="upload-icon">⇧</div>
-        <h2>Choose your Notion export</h2>
+        <h2>{% if import_preview %}Preview another export{% else %}Choose your Notion export{% endif %}</h2>
         <p>Upload a Notion ZIP to keep nested pages and files together, or a single HTML, Markdown, or CSV file.</p>
         <label class="file-select">
           Choose file
           <input type="file" name="export" accept=".html,.htm,.zip,.md,.markdown,.csv" required>
         </label>
         <div class="file-name" id="file-name">HTML, Markdown, CSV, or ZIP · up to 1 GB</div>
-        <button class="primary" type="submit">Import pages <span>→</span></button>
+        <button class="primary" type="submit">Preview changes <span>→</span></button>
       </form>
 
       <div class="import-notes">

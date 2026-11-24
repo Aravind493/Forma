@@ -171,6 +171,27 @@ def _source_id(name):
     match=re.search(r"([0-9a-f]{32})$",PurePosixPath(name).stem,re.I)
     return match.group(1).lower() if match else hashlib.sha256(_key(name).encode("utf-8")).hexdigest()
 
+def _matching_page(workspace,user,source_id,title):
+    page=Page.objects.filter(workspace=workspace,source_id=source_id).first()
+    if page is None:
+        page=Page.objects.filter(
+            workspace=workspace,
+            created_by=user,
+            parent__isnull=True,
+            source_id="",
+            title__iexact=title[:300],
+        ).first()
+    return page
+
+def _page_preview(name,title,workspace,user):
+    source_id=_source_id(name)
+    exists=_matching_page(workspace,user,source_id,title)
+    return {
+        "name":name,
+        "title":title[:300],
+        "status":"update" if exists else "add",
+    }
+
 def _store_asset(archive,name,workspace):
     base=get_valid_filename(PurePosixPath(name).name)[:120] or "attachment"
     digest=hashlib.sha256(name.encode("utf-8")).hexdigest()[:16]
@@ -206,8 +227,95 @@ def _resolve_url(source,url,page_keys,asset_urls):
 
 def _plain_html_page(upload,workspace,user):
     title,blocks=_parse_html(upload.read()); title=title or PurePosixPath(upload.name).stem or "Imported page"
-    page=Page.objects.create(workspace=workspace,created_by=user,title=title[:300],source_id=_source_id(upload.name),content=blocks or [{"type":"paragraph","text":"Imported from Notion."}])
+    source_id=_source_id(upload.name)
+    page=_matching_page(workspace,user,source_id,title) or Page(workspace=workspace,created_by=user)
+    page.title=title[:300]
+    page.source_id=source_id
+    page.content=blocks or [{"type":"paragraph","text":"Imported from Notion."}]
+    page.save()
     return 1,0
+
+def preview_notion_export(upload,workspace,user):
+    """Return the pages and add/update actions without changing pages or media."""
+    upload.seek(0)
+    if not zipfile.is_zipfile(upload):
+        upload.seek(0)
+        suffix=PurePosixPath(upload.name).suffix.lower()
+        if suffix in (".html",".htm"):
+            title,_=_parse_html(upload.read())
+            title=title or PurePosixPath(upload.name).stem or "Imported page"
+        elif suffix in (".md",".markdown"):
+            title,_=_parse_markdown(upload.read())
+            title=title or PurePosixPath(upload.name).stem
+        elif suffix==".csv":
+            title=PurePosixPath(upload.name).stem
+        else:
+            raise ValueError("Choose a Notion ZIP, HTML, Markdown, or CSV file.")
+        return [_page_preview(upload.name,title,workspace,user)]
+
+    upload.seek(0)
+    with zipfile.ZipFile(upload) as archive:
+        names=[
+            info.filename
+            for info in archive.infolist()
+            if not info.is_dir() and not info.filename.startswith("__MACOSX/")
+        ]
+        if sum(archive.getinfo(name).file_size for name in names)>MAX_BYTES:
+            raise ValueError("Uncompressed export content exceeds 1 GB.")
+
+        html_data={}
+        referenced_md=set()
+        for name in names:
+            if PurePosixPath(name).suffix.lower() not in (".html",".htm"):
+                continue
+            parser=NotionHTML()
+            parser.feed(archive.read(name).decode("utf-8-sig",errors="replace"))
+            parser._flush()
+            html_data[_key(name)]=(parser.title,parser.blocks)
+            for link in parser.links:
+                key=_target(name,link.get("url",""))
+                if key and key.endswith((".md",".markdown")):
+                    referenced_md.add(key)
+
+        html_names=[
+            name for name in names
+            if PurePosixPath(name).suffix.lower() in (".html",".htm")
+        ]
+        markdown_names=[
+            name for name in names
+            if PurePosixPath(name).suffix.lower() in (".md",".markdown")
+            and _key(name) not in referenced_md
+        ]
+        csv_names=[
+            name for name in names
+            if PurePosixPath(name).suffix.lower()==".csv"
+        ]
+        page_names=html_names+markdown_names+csv_names
+        if len(page_names)>MAX_PAGES:
+            raise ValueError("The export contains more than 500 HTML, Markdown, and CSV pages.")
+        if not page_names:
+            raise ValueError("No HTML, Markdown, or CSV pages were found in this ZIP.")
+
+        preview=[]
+        seen_source_ids=set()
+        for name in page_names:
+            suffix=PurePosixPath(name).suffix.lower()
+            if suffix in (".html",".htm"):
+                title=html_data[_key(name)][0] or _local_title(name)
+            elif suffix in (".md",".markdown"):
+                title,_=_parse_markdown(archive.read(name))
+                title=title or _local_title(name)
+            else:
+                title=PurePosixPath(name).stem
+            item=_page_preview(name,title,workspace,user)
+            source_id=_source_id(name)
+            if source_id in seen_source_ids:
+                # The importer processes files in this same order, so a repeated
+                # source ID in one ZIP updates the page created by its first entry.
+                item["status"]="update"
+            seen_source_ids.add(source_id)
+            preview.append(item)
+        return preview
 
 def import_notion_export(upload,workspace,user):
     """Import an HTML page or a Notion ZIP, updating matching pages on re-import."""
@@ -219,12 +327,16 @@ def import_notion_export(upload,workspace,user):
         if suffix in (".md",".markdown"):
             file_url=_store_upload(upload,workspace); title,blocks=_parse_markdown(upload.read()); title=title or PurePosixPath(upload.name).stem
             blocks.append({"type":"file","text":"Download original Markdown","url":file_url})
-            Page.objects.create(workspace=workspace,created_by=user,title=title[:300],source_id=_source_id(upload.name),content=blocks)
+            source_id=_source_id(upload.name)
+            page=_matching_page(workspace,user,source_id,title) or Page(workspace=workspace,created_by=user)
+            page.title=title[:300]; page.source_id=source_id; page.content=blocks; page.save()
             return 1,0
         if suffix==".csv":
             file_url=_store_upload(upload,workspace); rows=_parse_csv(upload); title=PurePosixPath(upload.name).stem
             rows.append({"type":"file","text":"Download full CSV","url":file_url})
-            Page.objects.create(workspace=workspace,created_by=user,title=title[:300],source_id=_source_id(upload.name),content=rows)
+            source_id=_source_id(upload.name)
+            page=_matching_page(workspace,user,source_id,title) or Page(workspace=workspace,created_by=user)
+            page.title=title[:300]; page.source_id=source_id; page.content=rows; page.save()
             return 1,0
         raise ValueError("Choose a Notion ZIP, HTML, Markdown, or CSV file.")
     upload.seek(0)
@@ -266,11 +378,7 @@ def import_notion_export(upload,workspace,user):
                 title=PurePosixPath(name).stem; blocks=_parse_csv(archive.open(name))
             blocks_by_key[key]=blocks
             source_id=_source_id(name)
-            page=Page.objects.filter(workspace=workspace,source_id=source_id).first()
-            if page is None:
-                # Adopt pages from the earlier flat importer so a corrected re-import repairs them instead of duplicating them.
-                page=Page.objects.filter(workspace=workspace,created_by=user,parent__isnull=True,source_id="",title__iexact=title[:300]).first()
-            if page is None: page=Page(workspace=workspace,created_by=user)
+            page=_matching_page(workspace,user,source_id,title) or Page(workspace=workspace,created_by=user)
             page.title=title[:300]; page.source_id=source_id; page.content=blocks or [{"type":"paragraph","text":"Imported from Notion."}]
             page.save(); objects[key]=page; count+=1
         # Notion's optional folder layout is another hierarchy source for Markdown/HTML exports.
