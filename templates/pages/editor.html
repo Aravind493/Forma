@@ -182,7 +182,15 @@
       <input id="search-input" placeholder="Search pages and content…" autocomplete="off">
       <button aria-label="Close">Esc</button>
     </form>
-    <div id="search-results"></div>
+    <div class="search-filters" role="group" aria-label="Filter search results">
+      <button type="button" class="is-selected" data-search-filter="all" aria-pressed="true">Everywhere</button>
+      <button type="button" data-search-filter="title" aria-pressed="false">Titles</button>
+      <button type="button" data-search-filter="content" aria-pressed="false">Content</button>
+      <button type="button" data-search-filter="favorites" aria-pressed="false">Favorites</button>
+      <button type="button" data-search-filter="recent" aria-pressed="false">Recently edited</button>
+    </div>
+    <div id="search-status" class="search-status" role="status" aria-live="polite">Type to search your workspace.</div>
+    <div id="search-results" role="region" aria-label="Search results"></div>
   </dialog>
 
   <dialog id="share-dialog" class="share-dialog">

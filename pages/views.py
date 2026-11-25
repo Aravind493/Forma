@@ -1,6 +1,7 @@
 import json
 import uuid
 import time
+from datetime import timedelta
 from copy import deepcopy
 from collections import defaultdict
 from pathlib import Path
@@ -16,6 +17,7 @@ from django.db import transaction
 from django.core.files import File
 from django.http import JsonResponse, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.utils.text import slugify
 from django.views.decorators.http import require_http_methods, require_POST
 from .models import Workspace, Membership, Page, Profile
@@ -408,9 +410,87 @@ def page_actions(request,page_id):
 
 @login_required
 def search(request):
-    workspace=_workspace(request.user); query=request.GET.get("q","").strip()[:100]
-    results=workspace.pages.filter(is_archived=False).filter(Q(title__icontains=query)|Q(content__icontains=query))[:20] if query else []
-    return JsonResponse({"results":[{"id":str(p.id),"title":p.title,"icon":p.icon,"url":f"/page/{p.id}/"} for p in results]})
+    workspace=_workspace(request.user)
+    query=request.GET.get("q","").strip()[:100]
+    search_filter=request.GET.get("filter","all")
+    if search_filter not in {"all","title","content","favorites","recent"}:
+        search_filter="all"
+
+    pages=workspace.pages.filter(is_archived=False)
+    if search_filter=="favorites":
+        pages=pages.filter(is_favorite=True)
+    elif search_filter=="recent":
+        pages=pages.filter(updated_at__gte=timezone.now()-timedelta(days=30))
+
+    if query:
+        title_match=Q(title__icontains=query)
+        content_match=Q(content__icontains=query)
+        if search_filter=="title":
+            pages=pages.filter(title_match)
+        elif search_filter=="content":
+            pages=pages.filter(content_match)
+        else:
+            pages=pages.filter(title_match|content_match)
+    elif search_filter not in {"favorites","recent"}:
+        return JsonResponse({"results":[]})
+
+    results=[]
+    for page in pages.order_by("-updated_at")[:20]:
+        snippet=_page_content_snippet(page.content,query) if query else ""
+        title_matches=bool(query and query.casefold() in page.title.casefold())
+        content_matches=bool(snippet)
+        match_type=("title and content" if title_matches and content_matches
+                    else "title" if title_matches
+                    else "content" if content_matches
+                    else "recent" if search_filter=="recent"
+                    else "favorite" if search_filter=="favorites"
+                    else "page")
+        results.append({
+            "id":str(page.id),
+            "title":page.title,
+            "icon":page.icon,
+            "url":f"/page/{page.id}/",
+            "snippet":snippet,
+            "match_type":match_type,
+        })
+    return JsonResponse({"results":results})
+
+
+def _page_content_snippet(content,query,max_length=180):
+    """Extract readable text from page blocks and return context around a match."""
+    if not query:
+        return ""
+
+    parts=[]
+    def collect(value):
+        if isinstance(value,dict):
+            for key,item in value.items():
+                if key not in {"url","id","type","icon","checked"} and isinstance(item,str):
+                    parts.append(item)
+                elif key not in {"url","id","type","icon","checked"}:
+                    collect(item)
+        elif isinstance(value,list):
+            for item in value:
+                collect(item)
+        elif isinstance(value,str):
+            parts.append(value)
+
+    collect(content)
+    text=" ".join(part for part in parts if part).strip()
+    match_index=text.casefold().find(query.casefold())
+    if match_index<0:
+        return ""
+
+    start=max(0,match_index-65)
+    end=min(len(text),start+max_length)
+    if end-start<max_length:
+        start=max(0,end-max_length)
+    snippet=text[start:end].strip()
+    if start:
+        snippet="…"+snippet
+    if end<len(text):
+        snippet+="…"
+    return snippet
 
 NOTION_PREVIEW_SESSION_KEY="notion_import_preview"
 NOTION_PREVIEW_TTL=24*60*60

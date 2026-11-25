@@ -906,7 +906,9 @@ button {
   border: 1px solid #e7e8e2;
   padding: 0;
   border-radius: 10px;
-  width: min(520px,calc(100% - 24px));
+  width: min(640px,calc(100% - 24px));
+  max-height: min(72vh,640px);
+  overflow-y: auto;
   box-shadow: 0 20px 80px #0002;
   position: fixed;
   top: 20vh;
@@ -940,9 +942,44 @@ button {
   font-size: 10px;
 }
 
+.search-filters {
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  padding: 10px 12px 4px;
+}
+
+.search-filters button {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #7e827a;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.search-filters button:hover {
+  background: #f5f6f2;
+}
+
+.search-filters button.is-selected {
+  border-color: #e6e9e2;
+  background: #f1f4ee;
+  color: #48634d;
+}
+
+.search-status {
+  padding: 8px 15px 5px;
+  color: #999d95;
+  font-size: 10px;
+}
+
 .search-result {
   display: block;
-  padding: 10px 14px;
+  padding: 11px 15px;
+  border-top: 1px solid #f0f1ed;
   text-decoration: none;
   color: #555;
   font-size: 12px;
@@ -952,8 +989,57 @@ button {
   background: #f5f6f2;
 }
 
-.search-result span {
+.search-result-heading {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  color: #41453f;
+  font-weight: 600;
+}
+
+.search-result-icon {
+  flex: 0 0 auto;
   margin-right: 8px;
+}
+
+.search-result-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-result-detail {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 5px 0 0 25px;
+  color: #858a81;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.search-result-kind {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #f3f4f1;
+  color: #73786f;
+  text-transform: capitalize;
+}
+
+.search-result-snippet {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.search-result mark {
+  padding: 0 1px;
+  border-radius: 2px;
+  background: #f8e9a9;
+  color: inherit;
 }
 
 .hidden-csrf {

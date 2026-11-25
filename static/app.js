@@ -1041,27 +1041,118 @@
   const searchDialog = document.getElementById("search-dialog");
   const searchInput = document.getElementById("search-input");
   const searchResults = document.getElementById("search-results");
+  const searchStatus = document.getElementById("search-status");
+  const searchFilterButtons = Array.from(document.querySelectorAll("[data-search-filter]"));
   document.getElementById("search-open").addEventListener("click", () => {
     searchDialog.showModal();
     searchInput.focus();
   });
+  searchInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") event.preventDefault();
+  });
 
   let searchTimer = null;
-  searchInput.addEventListener("input", () => {
+  let activeSearchFilter = "all";
+  let searchRequestId = 0;
+
+  function appendHighlightedText(container, text, query) {
+    if (!query) {
+      container.textContent = text;
+      return;
+    }
+
+    const lowerText = text.toLocaleLowerCase();
+    const lowerQuery = query.toLocaleLowerCase();
+    let cursor = 0;
+    let matchIndex = lowerText.indexOf(lowerQuery, cursor);
+
+    while (matchIndex !== -1) {
+      container.append(document.createTextNode(text.slice(cursor, matchIndex)));
+      const match = document.createElement("mark");
+      match.textContent = text.slice(matchIndex, matchIndex + query.length);
+      container.append(match);
+      cursor = matchIndex + query.length;
+      matchIndex = lowerText.indexOf(lowerQuery, cursor);
+    }
+
+    container.append(document.createTextNode(text.slice(cursor)));
+  }
+
+  function scheduleSearch() {
     window.clearTimeout(searchTimer);
     searchTimer = window.setTimeout(async () => {
-      const response = await fetch(app.dataset.searchUrl + "?q=" + encodeURIComponent(searchInput.value));
-      if (!response.ok) return;
-      const result = await response.json();
+      const query = searchInput.value.trim();
+      const requestId = ++searchRequestId;
       searchResults.replaceChildren();
-      result.results.forEach((page) => {
-        const link = document.createElement("a");
-        link.className = "search-result";
-        link.href = page.url;
-        link.textContent = page.icon + " " + page.title;
-        searchResults.append(link);
-      });
+
+      if (!query && !["favorites", "recent"].includes(activeSearchFilter)) {
+        searchStatus.textContent = "Type to search your workspace.";
+        return;
+      }
+
+      searchStatus.textContent = "Searching…";
+      const params = new URLSearchParams({ q: query, filter: activeSearchFilter });
+
+      try {
+        const response = await fetch(app.dataset.searchUrl + "?" + params.toString());
+        if (!response.ok) throw new Error("Search request failed.");
+        const result = await response.json();
+        if (requestId !== searchRequestId) return;
+
+        result.results.forEach((page) => {
+          const link = document.createElement("a");
+          link.className = "search-result";
+          link.href = page.url;
+
+          const heading = document.createElement("div");
+          heading.className = "search-result-heading";
+          const icon = document.createElement("span");
+          icon.className = "search-result-icon";
+          icon.textContent = page.icon + " ";
+          const title = document.createElement("span");
+          title.className = "search-result-title";
+          appendHighlightedText(title, page.title, query);
+          heading.append(icon, title);
+
+          const detail = document.createElement("div");
+          detail.className = "search-result-detail";
+          const badge = document.createElement("span");
+          badge.className = "search-result-kind";
+          badge.textContent = page.match_type;
+          detail.append(badge);
+
+          if (page.snippet) {
+            const snippet = document.createElement("span");
+            snippet.className = "search-result-snippet";
+            appendHighlightedText(snippet, page.snippet, query);
+            detail.append(snippet);
+          }
+
+          link.append(heading, detail);
+          searchResults.append(link);
+        });
+
+        searchStatus.textContent = result.results.length
+          ? `${result.results.length} matching ${result.results.length === 1 ? "page" : "pages"}`
+          : "No matching pages found.";
+      } catch (error) {
+        if (requestId !== searchRequestId) return;
+        searchStatus.textContent = "Search is unavailable. Try again.";
+      }
     }, 180);
+  }
+
+  searchInput.addEventListener("input", scheduleSearch);
+  searchFilterButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      activeSearchFilter = button.dataset.searchFilter;
+      searchFilterButtons.forEach((filterButton) => {
+        const selected = filterButton === button;
+        filterButton.classList.toggle("is-selected", selected);
+        filterButton.setAttribute("aria-pressed", String(selected));
+      });
+      scheduleSearch();
+    });
   });
 
   window.addEventListener("beforeunload", (event) => {
