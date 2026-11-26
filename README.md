@@ -10,7 +10,37 @@ The setup is location independent: copy the source to a new folder and run `setu
 
 For a Django admin account on a fresh database, run `.venv\Scripts\python.exe manage.py createsuperuser`. Your current `Aravind` account has already been granted Django admin access in the existing database.
 
+## Back up and restore local data
+
+Forma can package the SQLite database and the whole `media/` folder (including Notion imports and profile photos) into one ZIP. The default backup location is `work/backups/`, which is excluded from Git:
+
+```powershell
+.venv\Scripts\python.exe manage.py backup_forma
+```
+
+You can choose a backup path outside the project so it is easy to copy elsewhere:
+
+```powershell
+.venv\Scripts\python.exe manage.py backup_forma --output "D:\FormaBackups\forma-backup.zip"
+```
+
+To restore, first stop Forma with **Ctrl+C**. Restore validates the backup checksums and SQLite integrity, creates a safety backup of the current data, and then asks for confirmation before replacing the current database and media files:
+
+```powershell
+.venv\Scripts\python.exe manage.py restore_forma "D:\FormaBackups\forma-backup.zip"
+```
+
+The restore safety copy is saved in `work/backups/`. Use `--yes` to skip the confirmation prompt while still creating that safety copy. Keep backup ZIPs somewhere private: they contain your pages, accounts, and uploaded files.
+
 SQLite is the default and stores data in `db.sqlite3` beside `manage.py`. No database server or `.env` file is needed for local use. Optional settings can be placed in `.env` (start from `.env.example`).
+
+## Run the tests
+
+Run the core authentication, permissions, autosave, and Notion import regression tests with:
+
+```powershell
+.venv\Scripts\python.exe manage.py test pages.tests
+```
 
 ### Optional PostgreSQL
 
